@@ -44,8 +44,11 @@ exclude = [
 [features]
 default = []
 lto = []
+# Opt-in for deployment artifacts that must not require libstdc++.so.
+static-cxx = []
 
 [build-dependencies]
+cc = "1"
 anyhow = "1"
 bindgen = { version = "0.72", default-features = false, features = ["runtime"] }
 cmake = "0.1"

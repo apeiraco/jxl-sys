@@ -58,22 +58,39 @@ fn main() -> Result<()> {
     println!("cargo:rustc-link-lib=static=brotlienc");
     println!("cargo:rustc-link-lib=static=brotlicommon");
 
-    #[cfg(target_os = "macos")]
-    println!("cargo:rustc-link-lib=c++");
-    #[cfg(target_os = "linux")]
-    println!("cargo:rustc-link-lib=dylib=stdc++");
+    let target = env::var("TARGET")?;
+    if target.contains("apple-darwin") {
+        println!("cargo:rustc-link-lib=c++");
+    } else if target.contains("linux") && env::var_os("CARGO_FEATURE_STATIC_CXX").is_some() {
+        // A deployed recorder must not require a distro C++ runtime.
+        let compiler = cc::Build::new().cpp(true).get_compiler();
+        let output = compiler.to_command().arg("-print-file-name=libstdc++.a").output()?;
+        if !output.status.success() {
+            bail!("failed to locate target static C++ runtime");
+        }
+        let archive = PathBuf::from(String::from_utf8(output.stdout)?.trim());
+        if !archive.is_file() {
+            bail!("target static libstdc++.a is unavailable");
+        }
+        println!("cargo:rustc-link-search=native={}", archive.parent().unwrap().display());
+        println!("cargo:rustc-link-lib=static=stdc++");
+    } else if target.contains("linux") {
+        println!("cargo:rustc-link-lib=dylib=stdc++");
+    }
 
     validate_version()?;
 
     let mut cfg = Config::new("libjxl");
-    if cfg!(all(target_os = "windows", target_env = "msvc")) {
+    cfg.profile("Release");
+    if target.contains("windows-msvc") {
         if env::var_os("CMAKE_GENERATOR").is_none() && ninja_available() {
             cfg.generator("Ninja");
         }
 
-        // Force Release libs for debug builds to avoid MSVCRTD/CRT mismatch.
+        // Match Cargo CRT selection; never mix debug and release CRTs.
         cfg.profile("Release");
-        cfg.define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
+        let static_crt = env::var("CARGO_CFG_TARGET_FEATURE").unwrap_or_default().split(',').any(|feature| feature == "crt-static");
+        cfg.define("CMAKE_MSVC_RUNTIME_LIBRARY", if static_crt { "MultiThreaded" } else { "MultiThreadedDLL" });
         cfg.define("CMAKE_C_FLAGS_RELEASE", "/O2 /Ob2 /DNDEBUG");
         cfg.define("CMAKE_CXX_FLAGS_RELEASE", "/O2 /Ob2 /DNDEBUG");
     }
@@ -91,6 +108,9 @@ fn main() -> Result<()> {
         .define("JPEGXL_ENABLE_MANPAGES", "OFF")
         .define("JPEGXL_ENABLE_SJPEG", "OFF")
         .define("JPEGXL_ENABLE_TOOLS", "OFF")
+        .define("JPEGXL_ENABLE_PLUGINS", "OFF")
+        .define("JPEGXL_ENABLE_DEVTOOLS", "OFF")
+        .define("JPEGXL_ENABLE_TCMALLOC", "OFF")
         .env(
             "CMAKE_BUILD_PARALLEL_LEVEL",
             format!("{}", thread::available_parallelism()?),
