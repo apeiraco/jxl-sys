@@ -1,0 +1,44 @@
+name: Native fork builds
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake clang libclang-dev nasm
+      - name: macOS build tools
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm nasm
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Windows build tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install llvm nasm -y --no-progress
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+          "C:\Program Files\NASM" >> $env:GITHUB_PATH
+      - run: cargo test --features static-cxx
+      - name: MSVC static CRT
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:RUSTFLAGS = '-C target-feature=+crt-static'
+          cargo test --features static-cxx
